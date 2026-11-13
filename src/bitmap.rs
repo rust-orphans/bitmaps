@@ -4,7 +4,7 @@
 
 use core::fmt::{Debug, Error, Formatter};
 use core::hash::{Hash, Hasher};
-use core::mem::{size_of, MaybeUninit};
+use core::mem::size_of;
 use core::ops::*;
 
 use crate::types::{BitOps, Bits, BitsImpl};
@@ -136,17 +136,36 @@ where
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         if value.len() == size_of::<<BitsImpl<SIZE> as Bits>::Store>() {
-            let mut data: MaybeUninit<<BitsImpl<SIZE> as Bits>::Store> = MaybeUninit::uninit();
-            let data_ptr: *mut u8 = data.as_mut_ptr().cast();
-            Ok(unsafe {
-                data_ptr.copy_from_nonoverlapping(value.as_ptr(), value.len());
-                Self {
-                    data: data.assume_init(),
-                }
-            })
+            // Read the bytes as the target type (may contain invalid bit patterns)
+            let candidate = unsafe {
+                value
+                    .as_ptr()
+                    .cast::<<BitsImpl<SIZE> as Bits>::Store>()
+                    .read_unaligned()
+            };
+
+            // Validate by round-tripping through as_bytes()
+            // This is optimized away by the compiler at -O2/-O3
+            let temp = Self { data: candidate };
+            if temp.as_bytes() == value {
+                Ok(temp)
+            } else {
+                Err(())
+            }
         } else {
             Err(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rustsec_2025_0167() {
+        // From https://github.com/bodil/bitmaps/issues/35
+        assert_eq!(Err(()), Bitmap::<1>::try_from(&[2u8][..]));
     }
 }
 
